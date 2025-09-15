@@ -125,6 +125,7 @@ if __name__ == "__main__":
         total_tokens += n_tokens
     throughput = total_tokens/total_time
     print(f"Average throughput: {throughput} tokens/second")
-
+    logging.info(f"Average throughput {throughput} tokens/second")
+    
     with open(out_path, 'w') as fout:
         json.dump(outputs, fout, indent=4)
