@@ -1,5 +1,6 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig, LlamaForSequenceClassification
 from peft import LoraConfig, TaskType, get_peft_model
+from accelerate import init_empty_weights, infer_auto_device_map
 
 def get_model_tokenizer(model_name, num_labels=2, args=None):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -14,7 +15,7 @@ def get_model_tokenizer(model_name, num_labels=2, args=None):
         # with init_empty_weights():
         #     model = LlamaForSequenceClassification._from_config(config)
         # # print(model)
-        # device_map = infer_auto_device_map(model, max_memory={0: "20GiB", 1: "20GiB"}, no_split_module_classes=["LlamaDecoderLayer"])
+        # device_map = infer_auto_device_map(model, max_memory={0: "5GiB", 1: "5GiB"}, no_split_module_classes=["LlamaDecoderLayer"])
         base_model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels, device_map="auto")
         base_model.config.pad_token_id = tokenizer.pad_token_id
         if args.use_peft:

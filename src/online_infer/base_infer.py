@@ -13,11 +13,13 @@ import os
 import argparse
 import re
 from utils.query_utils import get_response, create_client
+from utils.other_utils import num_tokens_from_string
 
 current = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(current))
 
 models = ["FacebookAI/roberta-base", "Qwen/Qwen2.5-0.5B-Instruct"]
+online_models = ["gpt-4.1-mini", "gpt-3.5-turbo"]
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -26,7 +28,7 @@ def parse_args():
         help = "temperature for text generation")
     parser.add_argument("--batch_size", type=int, default=100)
     parser.add_argument("--data_name", type=str, default="mmlu_fina")
-    parser.add_argument("--query_online_model", type=str, default="gpt-4.1-mini") # cpr: 100; full: 250
+    parser.add_argument("--query_online_model", type=str, default=online_models[1]) # cpr: 100; full: 250
     parser.add_argument("--data_size", type=int, default=500)
     args = parser.parse_args()
     return args
@@ -37,7 +39,7 @@ if __name__ == "__main__":
     log_root = f"{args.root_path}/result/logs"
     if not os.path.exists(log_root):
         os.makedirs(log_root)
-    file_name = f"base-query-{args.data_name}.log"
+    file_name = f"base-query-{args.data_name}-{args.query_online_model}.log"
     file_path = f"{log_root}/{file_name}"
     logging.basicConfig(
         filename=file_path,
@@ -55,8 +57,8 @@ if __name__ == "__main__":
     out_dir = f'{args.root_path}/result/{args.data_name}'
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    out_path = f'{out_dir}/base_query_{args.data_name}.json'
 
+    out_path = f'{out_dir}/base_query_{args.query_online_model}_{args.data_name}.json'
     outputs = []
 
     total_time = 0
@@ -78,6 +80,18 @@ if __name__ == "__main__":
             pbar.update(1)
             avg_time = total_time/total_cnt
             pbar.set_postfix(time=avg_time)
+            logging.info(
+                f"Iteration {cnt+1}/{len(data)} - "
+                f"Average time {avg_time}s"
+            )
+    # compute throughput
+    total_tokens = 0
+    for sample in outputs:
+        answer = sample["llm response"]
+        n_tokens = num_tokens_from_string(answer)
+        total_tokens += n_tokens
+    throughput = total_tokens/total_time
+    print(f"Average throughput: {throughput} tokens/second")
 
     with open(out_path, 'w') as fout:
         json.dump(outputs, fout, indent=4)

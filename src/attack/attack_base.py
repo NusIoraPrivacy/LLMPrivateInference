@@ -2,7 +2,7 @@ from transformers import default_data_collator, get_scheduler
 from torch.utils.data import DataLoader
 import torch
 import torch.optim as optim
-from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+from sklearn.metrics import f1_score
 
 from tqdm import tqdm
 import random
@@ -12,13 +12,16 @@ import argparse
 import numpy as np
 import logging
 
-from utils.data_utils import AttackDataset
+from utils.data_utils import AttackDatasetTrain, AttackDatasetTest
 from utils.model_utils import get_model_tokenizer
+from utils.other_utils import get_unique_fake_attrs
 
 current = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(current))
 
-attack_models = ["Qwen/Qwen2.5-1.5B-Instruct", "meta-llama/Llama-3.2-3B", "FacebookAI/roberta-large"]
+# os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
+
+attack_models = ["meta-llama/Llama-3.2-1B", "FacebookAI/roberta-large"]
 discrim_models = ["FacebookAI/roberta-base", "Qwen/Qwen2.5-0.5B-Instruct"]
 
 def parse_args():
@@ -30,17 +33,16 @@ def parse_args():
         help = "max new token for text generation")
     parser.add_argument("--token_len", type=int, default=512)
     parser.add_argument("--train_batch_size", type=int, default=10)
-    parser.add_argument("--test_batch_size", type=int, default=20)
+    parser.add_argument("--test_batch_size", type=int, default=1)
     parser.add_argument("--data_name", type=str, default="mmlu_fina")
-    parser.add_argument("--discrim_model", type=str, default=discrim_models[0])
+    parser.add_argument("--discrim_model", type=str, default="FacebookAI/roberta-base")
     parser.add_argument("--attack_model", type=str, default=attack_models[0])
     parser.add_argument("--sample_mul", type=float, default=1)
     parser.add_argument("--train_pct", type=float, default=0.8)
-    parser.add_argument("--device", type=str, default="cuda:1")
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max_word", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--save_model", action='store_true')
     parser.add_argument("--use_peft", action='store_true')
     args = parser.parse_args()
     return args
@@ -53,7 +55,7 @@ if __name__ == "__main__":
         os.makedirs(log_root)
     attack_model_name = (args.attack_model).split("/")[-1]
     discrim_model_name = (args.discrim_model).split("/")[-1]
-    file_name = f"attack-{attack_model_name}-{discrim_model_name}-{args.data_name}-{args.sample_mul}.log"
+    file_name = f"id-attack-base-{attack_model_name}-{args.data_name}.log"
     file_path = f"{log_root}/{file_name}"
     logging.basicConfig(
         filename=file_path,
@@ -63,30 +65,40 @@ if __name__ == "__main__":
     )
 
     model, tokenizer = get_model_tokenizer(args.attack_model, num_labels=2, args=args)
+    # print(model)
     discrim_model_name = "-".join((args.discrim_model).split("/"))
     data_path = f'{args.root_path}/result/{args.data_name}/fake_attr_{discrim_model_name}_{args.sample_mul}.json'
     with open(data_path) as fin:
         raw_data = json.load(fin)
+
     # create classification dataset 
     process_data = []
     for sample in raw_data:
-        priv_attrs, fake_attrs, query = sample["private attributes"], sample["sample fake combinations"], sample["question"]
+        priv_attrs, fake_attrs, fake_attr_combs, query = sample["private attributes"], sample["fake attributes"], sample["sample fake combinations"], sample["question"]
+        # randomly sample one combination as the fake query
         if len(fake_attrs) > 0:
-            process_data.append({"prompt": query, "label": 1})
-            sample_fake_attrs = random.sample(fake_attrs, 1)
+            this_queries = []
+            this_queries.append({"prompt": query, "label": 1})
+            sample_fake_attrs = []
+            for fake_attr_list in fake_attrs:
+                fake_attr_list = list(set(fake_attr_list))
+                sample_fakes = random.choices(fake_attr_list, k=len(fake_attr_combs))
+                sample_fake_attrs.append(sample_fakes)
+            sample_fake_attrs = get_unique_fake_attrs(sample_fake_attrs)
             # print(sample_fake_attrs)
             for fake_attr_list in sample_fake_attrs:
                 this_query = "" + query
                 for priv_attr, fake_attr in zip(priv_attrs, fake_attr_list):
                     this_query = this_query.replace(priv_attr, fake_attr)
-                process_data.append({"prompt": this_query, "label": 0})
+                this_queries.append({"prompt": this_query, "label": 0})
+            process_data.append(this_queries)
 
     random.shuffle(process_data)
     n_train = int(len(process_data) * args.train_pct)
     train_data = process_data[:n_train]
     test_data = process_data[n_train:]
-    train_dataset = AttackDataset(train_data, tokenizer, args.max_word)
-    test_dataset = AttackDataset(test_data, tokenizer, args.max_word)
+    train_dataset = AttackDatasetTrain(train_data, tokenizer, args.max_word)
+    test_dataset = AttackDatasetTest(test_data, tokenizer, args.max_word)
     # obtain dataloader
     train_loader = DataLoader(
             train_dataset, 
@@ -140,9 +152,9 @@ if __name__ == "__main__":
                 # break
             print(f'[epoch: {epoch}] Loss: {np.mean(np.array(loss_list))}')
         
-        labels = []
-        predictions = []
         model.eval()
+        asr_list = []
+        f1_list = []
         with tqdm(total=len(test_loader)) as pbar:
             for i, batch in enumerate(test_loader):
                 for key in batch:
@@ -152,25 +164,27 @@ if __name__ == "__main__":
                             input_ids = batch["input_ids"], 
                             attention_mask = batch["attention_mask"])
                 logits = outputs.logits
-                y_pred = torch.argmax(logits, -1)
-                predictions += y_pred.tolist()
-                labels += batch["labels"].tolist()
-                acc = accuracy_score(labels, predictions)
-                auc = roc_auc_score(labels, predictions)
-                recall = recall_score(labels, predictions)
-                precision = precision_score(labels, predictions)
-                f1 = f1_score(labels, predictions)
+                y_pred = torch.argmax(logits, -1).tolist()
+                success = 0
+                if y_pred[0] == 1:
+                    success = 1
+                    for y in y_pred[1:]:
+                        if y == 1:
+                            success = 0
+                f1 = f1_score(batch["labels"].tolist(), y_pred)
+                asr_list.append(success)
+                f1_list.append(f1)
+                asr = sum(asr_list)/len(asr_list)
+                f1 = sum(f1_list)/len(f1_list)
                 pbar.update(1)
-                pbar.set_postfix(acc=acc, auc=auc, precision=precision, recall=recall, f1=f1)
-                # break
-        print(f"Accuracy for epoch {epoch}: {acc}")
-        print(f"AUC for epoch {epoch}: {auc}")
+                pbar.set_postfix(asr=asr, f1=f1)
+        asr = sum(asr_list)/len(asr_list)
+        f1 = sum(f1_list)/len(f1_list)
+        print(f"Attack success rate for epoch {epoch}: {asr}")
+        print(f"F1 for epoch {epoch}: {f1}")
 
         logging.info(
                 f"Epoch {epoch+1}/{args.epochs} - "
-                f"Accuracy {acc} - "
-                f"AUC {auc} - "
-                f"Precision {precision} - "
-                f"Recall {recall} - "
+                f"ASR {asr} - "
                 f"F1 {f1}"
             )

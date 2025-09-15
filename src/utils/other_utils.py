@@ -1,4 +1,5 @@
 import math
+import tiktoken
 
 def get_sample_number(fake_attrs, conf=0.95, ratio=0.5):
     n_attrs = len(fake_attrs)
@@ -18,3 +19,8 @@ def get_unique_fake_attrs(fake_attrs):
             seen.add(combination)
             new_fake_attrs.append(list(combination))
     return new_fake_attrs
+
+def num_tokens_from_string(string):
+    encoding = tiktoken.get_encoding("cl100k_base")
+    num_tokens = len(encoding.encode(string))
+    return num_tokens

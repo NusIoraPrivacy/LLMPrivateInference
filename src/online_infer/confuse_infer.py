@@ -14,6 +14,7 @@ import argparse
 import re
 from online_infer.filter import filter_attributes
 from utils.query_utils import get_response, create_client
+from utils.other_utils import num_tokens_from_string
 
 current = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(current))
@@ -38,15 +39,15 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=100)
     parser.add_argument("--data_name", type=str, default="mmlu_fina")
     parser.add_argument("--in_file_name", type=str, default="fina_fake_qcattr_none_zero.json")
-    parser.add_argument("--model_name", type=str, default=models[1])
+    parser.add_argument("--model_name", type=str, default=models[0])
     parser.add_argument("--test_only", type=bool, default=False)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--thd", type=float, default=0.5)
     parser.add_argument("--decay_weight", type=float, default=0.1)
     parser.add_argument("--sample_mul", type=float, default=1)
     parser.add_argument("--max_length", type=int, default=200) # cpr: 100; full: 250
     parser.add_argument("--query_online_model", type=str, default="gpt-4.1-mini") # cpr: 100; full: 250
-    parser.add_argument("--data_size", type=int, default=500)
+    parser.add_argument("--data_size", type=int, default=100)
     args = parser.parse_args()
     return args
 
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     out_dir = f'{args.root_path}/result/{args.data_name}'
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    out_path = f'{out_dir}/confuse_query_{model_name}_{args.sample_mul}.json'
+    out_path = f'{out_dir}/confuse_query_{args.query_online_model}_{model_name}_{args.sample_mul}.json'
 
     outputs = []
 
@@ -111,7 +112,19 @@ if __name__ == "__main__":
             pbar.update(1)
             avg_time = total_time/total_cnt
             pbar.set_postfix(time=avg_time)
+            logging.info(
+                f"Iteration {cnt+1}/{len(data)} - "
+                f"Average time {avg_time}s"
+            )
         
+    # compute throughput
+    total_tokens = 0
+    for sample in outputs:
+        answer = sample["llm response"]
+        n_tokens = num_tokens_from_string(answer)
+        total_tokens += n_tokens
+    throughput = total_tokens/total_time
+    print(f"Average throughput: {throughput} tokens/second")
 
     with open(out_path, 'w') as fout:
         json.dump(outputs, fout, indent=4)
