@@ -58,7 +58,7 @@ if __name__ == "__main__":
     if not os.path.exists(log_root):
         os.makedirs(log_root)
     model_name = (args.model_name).split("/")[-1]
-    file_name = f"confuse-query-{args.data_name}-{args.sample_mul}-{model_name}.log"
+    file_name = f"confuse-query-{args.query_online_model}-{args.data_name}-{args.sample_mul}-{model_name}.log"
     file_path = f"{log_root}/{file_name}"
     logging.basicConfig(
         filename=file_path,

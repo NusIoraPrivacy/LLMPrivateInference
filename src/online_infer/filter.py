@@ -40,7 +40,6 @@ def parse_args():
         help = "temperature for text generation")
     parser.add_argument("--batch_size", type=int, default=100)
     parser.add_argument("--data_name", type=str, default="mmlu_fina")
-    parser.add_argument("--in_file_name", type=str, default="fina_fake_qcattr_none_zero.json")
     parser.add_argument("--model_name", type=str, default=models[1])
     parser.add_argument("--test_only", type=bool, default=False)
     parser.add_argument("--device", type=str, default="cuda")
